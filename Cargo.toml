@@ -104,13 +104,50 @@ windows = { version = "0.58", features = [
 #       addNotificationRequest:withCompletionHandler:,
 #       getDeliveredNotificationsWithCompletionHandler:.
 #       Version must match objc2's companion: block2 0.5.x for objc2 0.5.x.
+#       NOTE: ConcreteBlock was renamed to StackBlock in block2 0.5 —
+#       macos.rs uses StackBlock accordingly.
+#
+# IMPORTANT — feature flags are mandatory for objc2-foundation, objc2-app-kit,
+# and objc2-user-notifications. Unlike most crates, the objc2 family gates every
+# individual type behind an explicit feature flag. Declaring a crate without
+# features compiles fine but exports nothing at the crate root, producing
+# "unresolved import" errors for every type used in macos.rs. Every type used
+# in platform/macos.rs must have its corresponding feature listed here.
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2                    = "0.5"
-objc2-foundation         = "0.2"
-objc2-app-kit            = "0.2"
-objc2-user-notifications = "0.2"
-block2                   = "0.5"
+objc2  = "0.5"
+block2 = "0.5"
+
+objc2-foundation = { version = "0.2", features = [
+    "NSArray",
+    "NSDate",
+    "NSError",
+    "NSNumber",
+    "NSSet",
+    "NSString",
+    "NSURL",
+] }
+
+objc2-app-kit = { version = "0.2", features = [
+    # NSApplication pulls in NSApplicationActivationPolicy automatically.
+    "NSApplication",
+] }
+
+objc2-user-notifications = { version = "0.2", features = [
+    "UNMutableNotificationContent",
+    "UNNotification",
+    "UNNotificationAction",
+    "UNNotificationAttachment",
+    "UNNotificationCategory",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSound",
+    "UNTextInputNotificationAction",
+    "UNTextInputNotificationResponse",
+    "UNUserNotificationCenter",
+    "UNUserNotificationCenterDelegate",
+] }
 
 # ─── Linux ─────────────────────────────────────────────────────────────────────
 # Direct org.freedesktop.Notifications D-Bus access via zbus.

@@ -52,7 +52,7 @@ use std::collections::HashSet;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc, Mutex};
 
-use block2::ConcreteBlock;
+use block2::StackBlock;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{
@@ -243,7 +243,7 @@ pub fn run() {
             | UNAuthorizationOptions::Sound
             | UNAuthorizationOptions::Badge;
 
-        let handler = ConcreteBlock::new(
+        let handler = StackBlock::new(
             move |granted: bool, error: *mut NSError| {
                 let permission = if !error.is_null() {
                     // System error during authorisation — treat as not_determined
@@ -482,7 +482,7 @@ fn show(
     // UNUserNotificationCenter queue. Thread-safe to send into mpsc from here.
     let tx2 = tx.clone();
     let id2 = cmd.id.clone();
-    let handler = ConcreteBlock::new(move |error: *mut NSError| {
+    let handler = StackBlock::new(move |error: *mut NSError| {
         if error.is_null() {
             tx2.send(evt_shown(&id2)).ok();
         } else {
@@ -649,7 +649,7 @@ fn build_category_options(options: Option<&[String]>) -> UNNotificationCategoryO
 
 fn get_delivered(center: &UNUserNotificationCenter, tx: &mpsc::Sender<String>) {
     let tx2 = tx.clone();
-    let handler = ConcreteBlock::new(
+    let handler = StackBlock::new(
         move |raw: *mut NSArray<objc2_user_notifications::UNNotification>| {
             let mut result: Vec<DeliveredNotification> = Vec::new();
 
