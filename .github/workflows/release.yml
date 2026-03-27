@@ -237,6 +237,19 @@ jobs:
         with:
           path: artifacts/
 
+      # Rename binaries to platform-unique filenames before attaching to the
+      # GitHub release. Without this, both Windows builds produce the same
+      # filename (notifier-hook-daemon.exe) and softprops/action-gh-release
+      # races trying to delete and replace the same asset — causing a 404.
+      - name: Rename binaries to unique filenames
+        run: |
+          mv artifacts/binary-notifier-hook-win32-x64/notifier-hook-daemon.exe  artifacts/binary-notifier-hook-win32-x64/notifier-hook-daemon-win32-x64.exe
+          mv artifacts/binary-notifier-hook-win32-arm64/notifier-hook-daemon.exe artifacts/binary-notifier-hook-win32-arm64/notifier-hook-daemon-win32-arm64.exe
+          mv artifacts/binary-notifier-hook-darwin-x64/notifier-hook-daemon      artifacts/binary-notifier-hook-darwin-x64/notifier-hook-daemon-darwin-x64
+          mv artifacts/binary-notifier-hook-darwin-arm64/notifier-hook-daemon    artifacts/binary-notifier-hook-darwin-arm64/notifier-hook-daemon-darwin-arm64
+          mv artifacts/binary-notifier-hook-linux-x64/notifier-hook-daemon       artifacts/binary-notifier-hook-linux-x64/notifier-hook-daemon-linux-x64
+          mv artifacts/binary-notifier-hook-linux-arm64/notifier-hook-daemon     artifacts/binary-notifier-hook-linux-arm64/notifier-hook-daemon-linux-arm64
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -261,9 +274,9 @@ jobs:
             | Linux | x64 | >= 2.35 |
             | Linux | arm64 | >= 2.35 |
           files: |
-            artifacts/binary-notifier-hook-win32-x64/notifier-hook-daemon.exe
-            artifacts/binary-notifier-hook-win32-arm64/notifier-hook-daemon.exe
-            artifacts/binary-notifier-hook-darwin-x64/notifier-hook-daemon
-            artifacts/binary-notifier-hook-darwin-arm64/notifier-hook-daemon
-            artifacts/binary-notifier-hook-linux-x64/notifier-hook-daemon
-            artifacts/binary-notifier-hook-linux-arm64/notifier-hook-daemon
+            artifacts/binary-notifier-hook-win32-x64/notifier-hook-daemon-win32-x64.exe
+            artifacts/binary-notifier-hook-win32-arm64/notifier-hook-daemon-win32-arm64.exe
+            artifacts/binary-notifier-hook-darwin-x64/notifier-hook-daemon-darwin-x64
+            artifacts/binary-notifier-hook-darwin-arm64/notifier-hook-daemon-darwin-arm64
+            artifacts/binary-notifier-hook-linux-x64/notifier-hook-daemon-linux-x64
+            artifacts/binary-notifier-hook-linux-arm64/notifier-hook-daemon-linux-arm64
