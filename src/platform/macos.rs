@@ -61,7 +61,7 @@ use objc2::{
 };
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSError, NSNumber, NSSet, NSString, NSURL,
+    MainThreadMarker, NSArray, NSError, NSNumber, NSSet, NSString, NSUInteger, NSURL,
 };
 use objc2_user_notifications::{
     UNAuthorizationOptions,
@@ -97,6 +97,16 @@ use crate::output::{
 /// Allocated once at startup; never mutated after creation.
 pub struct DelegateIvars {
     tx: mpsc::Sender<String>,
+}
+
+// UNUserNotificationCenter is documented by Apple as thread-safe, but objc2
+// does not implement Send/Sync for ObjC objects by default. Wrap it so we
+// can move it into the stdin background thread.
+struct SendCenter(Retained<UNUserNotificationCenter>);
+unsafe impl Send for SendCenter {}
+impl std::ops::Deref for SendCenter {
+    type Target = UNUserNotificationCenter;
+    fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 // ─── Delegate class declaration ───────────────────────────────────────────────
@@ -288,7 +298,8 @@ pub fn run() {
     // NSApp.run() so CFRunLoop-driven delegate callbacks fire correctly.
     {
         let tx_stdin   = tx.clone();
-        let center_bg  = center.clone();
+        // Wrap in SendCenter: UNUserNotificationCenter is thread-safe per Apple.
+        let center_bg  = SendCenter(center.clone());
         let registered: Arc<Mutex<HashSet<String>>> =
             Arc::new(Mutex::new(HashSet::new()));
 
@@ -309,7 +320,7 @@ pub fn run() {
 
 fn stdin_loop(
     tx:         mpsc::Sender<String>,
-    center:     Retained<UNUserNotificationCenter>,
+    center:     SendCenter,
     registered: Arc<Mutex<HashSet<String>>>,
 ) {
     for line in std::io::stdin().lock().lines().flatten() {
