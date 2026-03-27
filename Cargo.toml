@@ -134,7 +134,11 @@ objc2-app-kit = { version = "0.2", features = [
 ] }
 
 objc2-user-notifications = { version = "0.2", features = [
-    "UNMutableNotificationContent",
+    # Feature list sourced directly from the 0.2.2 cargo error output.
+    # UNMutableNotificationContent, UNTextInputNotificationAction,
+    # UNTextInputNotificationResponse, UNUserNotificationCenterDelegate,
+    # and the options/levels types are unconditionally included in 0.2.2 —
+    # declaring them as features causes a compile error.
     "UNNotification",
     "UNNotificationAction",
     "UNNotificationAttachment",
@@ -143,10 +147,7 @@ objc2-user-notifications = { version = "0.2", features = [
     "UNNotificationRequest",
     "UNNotificationResponse",
     "UNNotificationSound",
-    "UNTextInputNotificationAction",
-    "UNTextInputNotificationResponse",
     "UNUserNotificationCenter",
-    "UNUserNotificationCenterDelegate",
 ] }
 
 # ─── Linux ─────────────────────────────────────────────────────────────────────
