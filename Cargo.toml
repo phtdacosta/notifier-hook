@@ -121,6 +121,7 @@ block2 = "0.5"
 objc2-foundation = { version = "0.2", features = [
     "NSArray",
     "NSDate",
+    "NSEnumerator",
     "NSError",
     "NSSet",
     "NSString",
@@ -129,16 +130,20 @@ objc2-foundation = { version = "0.2", features = [
 ] }
 
 objc2-app-kit = { version = "0.2", features = [
-    # NSApplication pulls in NSApplicationActivationPolicy automatically.
     "NSApplication",
+    "NSApplicationActivationPolicy",
 ] }
 
 objc2-user-notifications = { version = "0.2", features = [
-    # Feature list sourced directly from the 0.2.2 cargo error output.
+    # Sourced from the exact available feature list in the 0.2.2 CI error.
+    # block2: enables all completion-handler-based methods.
+    # bitflags: enables UNAuthorizationOptions, UNNotificationPresentationOptions,
+    #           UNNotificationActionOptions, UNNotificationCategoryOptions constants.
     # UNMutableNotificationContent, UNTextInputNotificationAction,
     # UNTextInputNotificationResponse, UNUserNotificationCenterDelegate,
-    # and the options/levels types are unconditionally included in 0.2.2 —
-    # declaring them as features causes a compile error.
+    # and interruption level types are unconditionally included in 0.2.2.
+    "block2",
+    "bitflags",
     "UNNotification",
     "UNNotificationAction",
     "UNNotificationAttachment",

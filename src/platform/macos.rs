@@ -54,7 +54,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use block2::StackBlock;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{
     declare_class, msg_send_id, mutability, ClassType, DeclaredClass,
 };
@@ -112,6 +112,8 @@ declare_class!(
     impl DeclaredClass for NotificationDelegate {
         type Ivars = DelegateIvars;
     }
+
+    unsafe impl NSObjectProtocol for NotificationDelegate {}
 
     /// UNUserNotificationCenterDelegate protocol implementation.
     unsafe impl UNUserNotificationCenterDelegate for NotificationDelegate {
@@ -408,7 +410,7 @@ fn show(
             }
 
             if let Some(b) = m.badge {
-                content.setBadgeCount(Some(&NSNumber::new_u32(b)));
+                content.setBadge(Some(&NSNumber::new_u32(b)));
             }
 
             if let Some(level) = &m.interruption_level {
@@ -454,7 +456,7 @@ fn show(
                         let mut vec: Vec<Retained<UNNotificationAttachment>> =
                             existing.iter().map(|a| a.retain()).collect();
                         vec.push(att);
-                        let arr = NSArray::from_retained_slice(&vec);
+                        let arr = NSArray::from_id_slice(&vec);
                         content.setAttachments(&arr);
                     }
                     Err(e) => {
@@ -507,7 +509,7 @@ fn dismiss(id: &str, center: &UNUserNotificationCenter) {
     // Remove both delivered and pending (not-yet-delivered) requests with
     // this identifier. Covering both cases costs nothing extra.
     unsafe {
-        let ids = NSArray::from_slice(&[NSString::from_str(id)]);
+        let ids = NSArray::from_id_slice(&[NSString::from_str(id)]);
         center.removeDeliveredNotificationsWithIdentifiers(&ids);
         center.removePendingNotificationRequestsWithIdentifiers(&ids);
     }
@@ -526,7 +528,7 @@ fn register_categories(
 
     for cat_def in &categories {
         let actions  = build_actions(&cat_def.actions, tx);
-        let action_arr = NSArray::from_retained_slice(&actions);
+        let action_arr = NSArray::from_id_slice(&actions);
         let options  = build_category_options(cat_def.options.as_deref());
 
         let category = unsafe {
@@ -542,7 +544,7 @@ fn register_categories(
         reg.insert(cat_def.id.clone());
     }
 
-    let set = unsafe { NSSet::from_retained_slice(&cat_objects) };
+    let set = unsafe { NSSet::from_id_slice(&cat_objects) };
     unsafe { center.setNotificationCategories(&set) };
 }
 
