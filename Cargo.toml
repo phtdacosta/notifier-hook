@@ -109,8 +109,8 @@ windows = { version = "0.58", features = [
 objc2   = "0.5"
 block2  = "0.5"
 
-# objc2-foundation: NSEnumerator is required for `for item in nsarray` iteration.
-# NSNumber has no feature flag in 0.2.2 — it is unconditionally included.
+# NSNumber has no feature flag in 0.2.2 — unconditionally included.
+# NSEnumerator required for arr.iter() on NSArray.
 objc2-foundation = { version = "0.2", features = [
     "NSArray",
     "NSDate",
@@ -121,26 +121,23 @@ objc2-foundation = { version = "0.2", features = [
     "NSURL",
 ] }
 
-# NSRunningApplication is the feature that contains NSApplicationActivationPolicy.
-# NSApplicationActivationPolicy is NOT its own feature flag in 0.2.2.
+# NSApplication lives in application.rs gated by NSResponder.
+# NSApplicationActivationPolicy lives in NSRunningApplication.rs.
 objc2-app-kit = { version = "0.2", features = [
     "NSApplication",
+    "NSResponder",
     "NSRunningApplication",
 ] }
 
-# block2: enables all completion-handler-accepting methods
-#   (requestAuthorizationWithOptions_completionHandler,
-#    addNotificationRequest_withCompletionHandler,
-#    getDeliveredNotificationsWithCompletionHandler).
-# bitflags: enables all NS*Options constants
-#   (UNAuthorizationOptions::Alert/Sound/Badge,
-#    UNNotificationPresentationOptions::Banner/Sound/Badge,
-#    UNNotificationActionOptions::Destructive/AuthenticationRequired/Foreground,
-#    UNNotificationCategoryOptions::CustomDismissAction/AllowInCarPlay/etc).
+# Feature notes (sourced directly from generated source files):
+# block2   — enables all completion-handler methods on UNUserNotificationCenter
+# bitflags — enables UNAuthorizationOptions, UNNotificationPresentationOptions,
+#            UNNotificationActionOptions, UNNotificationCategoryOptions constants
+# UNNotificationTrigger — required alongside UNNotificationContent for
+#   requestWithIdentifier_content_trigger (gated on BOTH features)
 # UNMutableNotificationContent, UNTextInputNotificationAction,
 # UNTextInputNotificationResponse, UNUserNotificationCenterDelegate,
-# and all UNNotification*Level/InterruptionLevel types are unconditionally
-# included in 0.2.2 — they have no feature flag.
+# UNNotificationInterruptionLevel are unconditionally included in 0.2.2.
 objc2-user-notifications = { version = "0.2", features = [
     "block2",
     "bitflags",
@@ -152,6 +149,7 @@ objc2-user-notifications = { version = "0.2", features = [
     "UNNotificationRequest",
     "UNNotificationResponse",
     "UNNotificationSound",
+    "UNNotificationTrigger",
     "UNUserNotificationCenter",
 ] }
 

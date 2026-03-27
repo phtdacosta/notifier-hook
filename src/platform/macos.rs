@@ -52,9 +52,10 @@ use std::collections::HashSet;
 use std::io::BufRead;
 use std::sync::{mpsc, Arc, Mutex};
 
-use block2::StackBlock;
+use block2::RcBlock;
+use core::ptr::NonNull;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{Bool, NSObjectProtocol, ProtocolObject};
 use objc2::{
     declare_class, msg_send_id, mutability, ClassType, DeclaredClass,
 };
@@ -113,7 +114,7 @@ declare_class!(
         type Ivars = DelegateIvars;
     }
 
-    // NSObjectProtocol is required by UNUserNotificationCenterDelegate.
+    // NSObjectProtocol is a required supertrait of UNUserNotificationCenterDelegate.
     unsafe impl NSObjectProtocol for NotificationDelegate {}
 
     /// UNUserNotificationCenterDelegate protocol implementation.
@@ -176,19 +177,13 @@ declare_class!(
                     evt_dismissed(&id, REASON_USER_DISMISSED)
                 }
                 _ => {
-                    // Check if this is a text-input response via isKindOfClass.
-                    // downcast_ref is not available on plain &T in objc2 0.5.x —
-                    // only on &AnyObject. We use the ObjC runtime check instead.
-                    use objc2::ClassType;
-                    let is_text: bool = unsafe {
-                        objc2::msg_send![response, isKindOfClass: UNTextInputNotificationResponse::class()]
+                    // Attempt downcast to text-input response first.
+                    // UNTextInputNotificationResponse is a subclass of
+                    // UNNotificationResponse — downcast_ref is safe here.
+                    let text_response = unsafe {
+                        response.downcast_ref::<UNTextInputNotificationResponse>()
                     };
-                    if is_text {
-                        // SAFETY: we just verified the dynamic type above.
-                        let tr = unsafe {
-                            &*(response as *const UNNotificationResponse
-                                as *const UNTextInputNotificationResponse)
-                        };
+                    if let Some(tr) = text_response {
                         let text = unsafe { tr.userText().to_string() };
                         evt_reply(&id, &action_id, &text)
                     } else {
@@ -252,13 +247,15 @@ pub fn run() {
             | UNAuthorizationOptions::Sound
             | UNAuthorizationOptions::Badge;
 
-        let handler = StackBlock::new(
-            move |granted: bool, error: *mut NSError| {
+        // RcBlock required: method expects &block2::DynBlock<dyn Fn(Bool, *mut NSError)>.
+        // Bool (objc2::runtime::Bool) is the ObjC BOOL type, not Rust bool.
+        let handler = RcBlock::new(
+            move |granted: Bool, error: *mut NSError| {
                 let permission = if !error.is_null() {
                     // System error during authorisation — treat as not_determined
                     // rather than crashing; the caller can inspect and retry.
                     "not_determined"
-                } else if granted {
+                } else if granted.as_bool() {
                     "granted"
                 } else {
                     "denied"
@@ -272,7 +269,7 @@ pub fn run() {
         unsafe {
             center.requestAuthorizationWithOptions_completionHandler(
                 options,
-                &handler,
+                &*handler,
             );
         }
     }
@@ -449,7 +446,9 @@ fn show(
                 }
             }
 
-            // Attachments — invalid paths are skipped with warn, not fatal.
+            // Attachments — collect all valid ones then set once.
+            // Invalid paths are skipped with warn, not fatal.
+            let mut attachment_vec: Vec<Retained<UNNotificationAttachment>> = Vec::new();
             for path in m.attachments.iter().flatten() {
                 let url = NSURL::fileURLWithPath(&NSString::from_str(path));
                 match UNNotificationAttachment::attachmentWithIdentifier_URL_options_error(
@@ -457,15 +456,7 @@ fn show(
                     &url,
                     None,
                 ) {
-                    Ok(att) => {
-                        // NSArray is immutable — rebuild with the new element.
-                        let existing = content.attachments();
-                        let mut vec: Vec<Retained<UNNotificationAttachment>> =
-                            existing.to_vec();
-                        vec.push(att);
-                        let arr = NSArray::from_id_slice(&vec);
-                        content.setAttachments(&arr);
-                    }
+                    Ok(att) => { attachment_vec.push(att); }
                     Err(e) => {
                         tx.send(evt_warn(&format!(
                             "attachment '{}' failed to load: {} — skipped",
@@ -475,14 +466,21 @@ fn show(
                     }
                 }
             }
+            if !attachment_vec.is_empty() {
+                let arr = NSArray::from_id_slice(&attachment_vec);
+                content.setAttachments(&arr);
+            }
         }
     }
 
     // nil trigger = deliver immediately.
+    // requestWithIdentifier_content_trigger takes &UNNotificationContent.
+    // UNMutableNotificationContent: Deref<Target=UNNotificationContent>,
+    // so &**content upcasts via the Deref chain.
     let request = unsafe {
         UNNotificationRequest::requestWithIdentifier_content_trigger(
             &NSString::from_str(&cmd.id),
-            &content,
+            &**content,
             None,
         )
     };
@@ -491,7 +489,8 @@ fn show(
     // UNUserNotificationCenter queue. Thread-safe to send into mpsc from here.
     let tx2 = tx.clone();
     let id2 = cmd.id.clone();
-    let handler = StackBlock::new(move |error: *mut NSError| {
+    // Method expects Option<&block2::DynBlock<dyn Fn(*mut NSError)>>.
+    let handler = RcBlock::new(move |error: *mut NSError| {
         if error.is_null() {
             tx2.send(evt_shown(&id2)).ok();
         } else {
@@ -505,7 +504,7 @@ fn show(
     unsafe {
         center.addNotificationRequest_withCompletionHandler(
             &request,
-            Some(&handler),
+            Some(&*handler),
         );
     }
 }
@@ -551,8 +550,14 @@ fn register_categories(
         reg.insert(cat_def.id.clone());
     }
 
-    let set = unsafe { NSSet::from_id_slice(&cat_objects) };
-    unsafe { center.setNotificationCategories(&set) };
+    // NSSet::from_id_slice requires HasStableHash which UNNotificationCategory
+    // (InteriorMutable) does not satisfy. Use msg_send_id! to call
+    // +[NSSet setWithArray:] directly, bypassing the Rust type bound.
+    let cat_arr = NSArray::from_id_slice(&cat_objects);
+    let set: Retained<NSSet<UNNotificationCategory>> = unsafe {
+        objc2::msg_send_id![NSSet::<UNNotificationCategory>::class(), setWithArray: &*cat_arr]
+    };
+    unsafe { center.setNotificationCategories(&*set) };
 }
 
 fn build_actions(
@@ -658,39 +663,39 @@ fn build_category_options(options: Option<&[String]>) -> UNNotificationCategoryO
 
 fn get_delivered(center: &UNUserNotificationCenter, tx: &mpsc::Sender<String>) {
     let tx2 = tx.clone();
-    let handler = StackBlock::new(
-        move |raw: *mut NSArray<objc2_user_notifications::UNNotification>| {
+    // Method expects &block2::DynBlock<dyn Fn(NonNull<NSArray<UNNotification>>)>.
+    // NonNull is never null — no null check needed.
+    let handler = RcBlock::new(
+        move |raw: NonNull<NSArray<objc2_user_notifications::UNNotification>>| {
             let mut result: Vec<DeliveredNotification> = Vec::new();
 
-            if !raw.is_null() {
-                let arr = unsafe { &*raw };
+            let arr = unsafe { raw.as_ref() };
 
-                for notif in arr.iter() {
-                    let request = unsafe { notif.request() };
-                    let content = unsafe { request.content() };
+            for notif in arr.iter() {
+                let request = unsafe { notif.request() };
+                let content = unsafe { request.content() };
 
-                    let id = unsafe { request.identifier().to_string() };
-                    let title = unsafe { content.title().to_string() };
-                    let body = {
-                        let b = unsafe { content.body().to_string() };
-                        if b.is_empty() { None } else { Some(b) }
-                    };
+                let id = unsafe { request.identifier().to_string() };
+                let title = unsafe { content.title().to_string() };
+                let body = {
+                    let b = unsafe { content.body().to_string() };
+                    if b.is_empty() { None } else { Some(b) }
+                };
 
-                    // UNNotification.date is the delivery timestamp.
-                    // timeIntervalSince1970 returns seconds as f64.
-                    let delivered_at = unsafe {
-                        use objc2_foundation::NSDate;
-                        let date: Retained<NSDate> = notif.date();
-                        (date.timeIntervalSince1970() * 1000.0) as u64
-                    };
+                // UNNotification.date is the delivery timestamp.
+                // timeIntervalSince1970 returns seconds as f64.
+                let delivered_at = unsafe {
+                    use objc2_foundation::NSDate;
+                    let date: Retained<NSDate> = notif.date();
+                    (date.timeIntervalSince1970() * 1000.0) as u64
+                };
 
-                    result.push(DeliveredNotification {
-                        id,
-                        title,
-                        body,
-                        delivered_at,
-                    });
-                }
+                result.push(DeliveredNotification {
+                    id,
+                    title,
+                    body,
+                    delivered_at,
+                });
             }
 
             tx2.send(evt_delivered(&result)).ok();
@@ -698,7 +703,7 @@ fn get_delivered(center: &UNUserNotificationCenter, tx: &mpsc::Sender<String>) {
     );
 
     unsafe {
-        center.getDeliveredNotificationsWithCompletionHandler(&handler);
+        center.getDeliveredNotificationsWithCompletionHandler(&*handler);
     }
 }
 
