@@ -69,12 +69,12 @@ use futures_util::StreamExt;
 use zbus::{Connection, MatchRule, MessageStream};
 
 use crate::ipc::{
-    Capabilities, Command, DeliveredNotification, InitCommand, LinuxOptions,
+    Capabilities, Command, InitCommand,
     ShowCommand, REASON_APP_CLOSED, REASON_TIMED_OUT, REASON_UNKNOWN,
     REASON_USER_DISMISSED,
 };
 use crate::output::{
-    self, evt_action, evt_dismissed, evt_ready, evt_shown, evt_warn,
+    self, evt_ready, evt_shown, evt_warn,
     spawn_stdout_writer,
 };
 
@@ -360,7 +360,7 @@ async fn notify(
 
     match result {
         Ok(msg) => {
-            let dbus_id: u32 = msg.body().unwrap_or(0);
+            let dbus_id: u32 = msg.body().deserialize::<u32>().unwrap_or(0);
             if dbus_id != 0 {
                 id_map.lock().unwrap().insert(cmd.id.clone(), dbus_id);
             }
@@ -477,7 +477,7 @@ async fn get_capabilities(conn: &Connection) -> Capabilities {
         .await;
 
     let caps_vec: Vec<String> = result
-        .and_then(|m| m.body::<Vec<String>>())
+        .and_then(|m| m.body().deserialize::<Vec<String>>().map_err(Into::into))
         .unwrap_or_default();
 
     Capabilities {
@@ -542,7 +542,7 @@ async fn listen_action_invoked(
         let Ok(msg) = msg_result else { continue };
 
         // ActionInvoked(uint id, string action_key)
-        let Ok((dbus_id, action_key)) = msg.body::<(u32, String)>() else {
+        let Ok((dbus_id, action_key)) = msg.body().deserialize::<(u32, String)>() else {
             continue;
         };
 
@@ -602,7 +602,7 @@ async fn listen_notification_closed(
         //   2 — dismissed by the user
         //   3 — closed by a CloseNotification call
         //   4 — undefined / reserved
-        let Ok((dbus_id, reason_code)) = msg.body::<(u32, u32)>() else {
+        let Ok((dbus_id, reason_code)) = msg.body().deserialize::<(u32, u32)>() else {
             continue;
         };
 
