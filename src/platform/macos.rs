@@ -135,10 +135,11 @@ declare_class!(
                 dyn Fn(UNNotificationPresentationOptions)
             >,
         ) {
+            // UNNotificationPresentationOptions bitflags constants are not
+            // accessible cross-crate in 0.2.2. Use raw values from source:
+            //   Badge  = 1<<0, Sound = 1<<1, Banner = 1<<4
             completion.call((
-                UNNotificationPresentationOptions::Banner
-                    | UNNotificationPresentationOptions::Sound
-                    | UNNotificationPresentationOptions::Badge,
+                UNNotificationPresentationOptions(1<<4 | 1<<1 | 1<<0),
             ));
         }
 
@@ -177,13 +178,19 @@ declare_class!(
                     evt_dismissed(&id, REASON_USER_DISMISSED)
                 }
                 _ => {
-                    // Attempt downcast to text-input response first.
-                    // UNTextInputNotificationResponse is a subclass of
-                    // UNNotificationResponse — downcast_ref is safe here.
-                    let text_response = unsafe {
-                        response.downcast_ref::<UNTextInputNotificationResponse>()
+                    // downcast_ref is only available on &AnyObject in objc2 0.5,
+                    // not on concrete class references. Use isKindOfClass: +
+                    // raw pointer cast instead — safe because we verify the
+                    // dynamic type first.
+                    use objc2::ClassType;
+                    let is_text_input: bool = unsafe {
+                        objc2::msg_send![response, isKindOfClass: UNTextInputNotificationResponse::class()]
                     };
-                    if let Some(tr) = text_response {
+                    if is_text_input {
+                        let tr: &UNTextInputNotificationResponse = unsafe {
+                            &*(response as *const UNNotificationResponse
+                                as *const UNTextInputNotificationResponse)
+                        };
                         let text = unsafe { tr.userText().to_string() };
                         evt_reply(&id, &action_id, &text)
                     } else {
@@ -243,9 +250,9 @@ pub fn run() {
     // May take 0 ms (permission already resolved) or 30+ seconds (dialog).
     {
         let tx_ready = tx.clone();
-        let options  = UNAuthorizationOptions::Alert
-            | UNAuthorizationOptions::Sound
-            | UNAuthorizationOptions::Badge;
+        // UNAuthorizationOptions bitflags constants not accessible cross-crate.
+        // Raw values from source: Badge=1<<0, Sound=1<<1, Alert=1<<2
+        let options = UNAuthorizationOptions(1<<2 | 1<<1 | 1<<0);
 
         // RcBlock required: method expects &block2::DynBlock<dyn Fn(Bool, *mut NSError)>.
         // Bool (objc2::runtime::Bool) is the ObjC BOOL type, not Rust bool.
@@ -570,12 +577,13 @@ fn build_actions(
         let action_id = NSString::from_str(&def.id);
         let title     = NSString::from_str(&def.title);
 
-        let mut opts = UNNotificationActionOptions::empty();
+        // UNNotificationActionOptions: AuthenticationRequired=1<<0, Destructive=1<<1, Foreground=1<<2
+        let mut opts_bits: NSUInteger = 0;
         if def.destructive == Some(true) {
-            opts |= UNNotificationActionOptions::Destructive;
+            opts_bits |= 1<<1; // Destructive
         }
         if def.authentication_required == Some(true) {
-            opts |= UNNotificationActionOptions::AuthenticationRequired;
+            opts_bits |= 1<<0; // AuthenticationRequired
         }
         // Foreground is intentionally NOT applied by default.
         // This daemon runs under NSApplicationActivationPolicy::Accessory
@@ -584,9 +592,10 @@ fn build_actions(
         // window / unwanted focus steal.
         // Only set when the caller explicitly opts in via foreground: true.
         if def.foreground == Some(true) {
-            opts |= UNNotificationActionOptions::Foreground;
+            opts_bits |= 1<<2; // Foreground
         }
 
+        let opts = UNNotificationActionOptions(opts_bits);
         let action: Retained<UNNotificationAction> =
             if def.action_type.as_deref() == Some("text_input") {
                 let placeholder = NSString::from_str(
@@ -636,19 +645,17 @@ fn build_actions(
 }
 
 fn build_category_options(options: Option<&[String]>) -> UNNotificationCategoryOptions {
-    let mut opts = UNNotificationCategoryOptions::empty();
-    let Some(list) = options else { return opts };
+    // UNNotificationCategoryOptions: CustomDismissAction=1<<0, AllowInCarPlay=1<<1,
+    // HiddenPreviewsShowTitle=1<<2, HiddenPreviewsShowSubtitle=1<<3
+    let mut cat_opts_bits: NSUInteger = 0;
+    let Some(list) = options else { return UNNotificationCategoryOptions(0); };
 
     for opt in list {
         match opt.as_str() {
-            "custom_dismiss_action" =>
-                opts |= UNNotificationCategoryOptions::CustomDismissAction,
-            "allow_in_car_play" =>
-                opts |= UNNotificationCategoryOptions::AllowInCarPlay,
-            "hidden_previews_show_title" =>
-                opts |= UNNotificationCategoryOptions::HiddenPreviewsShowTitle,
-            "hidden_previews_show_subtitle_body" =>
-                opts |= UNNotificationCategoryOptions::HiddenPreviewsShowSubtitle,
+            "custom_dismiss_action" => { cat_opts_bits |= 1<<0; } // CustomDismissAction
+            "allow_in_car_play" => { cat_opts_bits |= 1<<1; } // AllowInCarPlay
+            "hidden_previews_show_title" => { cat_opts_bits |= 1<<2; } // HiddenPreviewsShowTitle
+            "hidden_previews_show_subtitle_body" => { cat_opts_bits |= 1<<3; } // HiddenPreviewsShowSubtitle
             _ => {
                 // Unknown option string — silently ignore for forward compat.
                 // Future macOS versions may add new options; we should not
@@ -656,7 +663,7 @@ fn build_category_options(options: Option<&[String]>) -> UNNotificationCategoryO
             }
         }
     }
-    opts
+    UNNotificationCategoryOptions(cat_opts_bits)
 }
 
 // ─── get_delivered ────────────────────────────────────────────────────────────
