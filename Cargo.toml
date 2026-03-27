@@ -104,20 +104,13 @@ windows = { version = "0.58", features = [
 #       addNotificationRequest:withCompletionHandler:,
 #       getDeliveredNotificationsWithCompletionHandler:.
 #       Version must match objc2's companion: block2 0.5.x for objc2 0.5.x.
-#       NOTE: ConcreteBlock was renamed to StackBlock in block2 0.5 —
-#       macos.rs uses StackBlock accordingly.
-#
-# IMPORTANT — feature flags are mandatory for objc2-foundation, objc2-app-kit,
-# and objc2-user-notifications. Unlike most crates, the objc2 family gates every
-# individual type behind an explicit feature flag. Declaring a crate without
-# features compiles fine but exports nothing at the crate root, producing
-# "unresolved import" errors for every type used in macos.rs. Every type used
-# in platform/macos.rs must have its corresponding feature listed here.
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2  = "0.5"
-block2 = "0.5"
+objc2   = "0.5"
+block2  = "0.5"
 
+# objc2-foundation: NSEnumerator is required for `for item in nsarray` iteration.
+# NSNumber has no feature flag in 0.2.2 — it is unconditionally included.
 objc2-foundation = { version = "0.2", features = [
     "NSArray",
     "NSDate",
@@ -126,22 +119,29 @@ objc2-foundation = { version = "0.2", features = [
     "NSSet",
     "NSString",
     "NSURL",
-    # NSNumber is unconditionally included in 0.2.2 — no feature flag needed.
 ] }
 
+# NSRunningApplication is the feature that contains NSApplicationActivationPolicy.
+# NSApplicationActivationPolicy is NOT its own feature flag in 0.2.2.
 objc2-app-kit = { version = "0.2", features = [
     "NSApplication",
-    "NSApplicationActivationPolicy",
+    "NSRunningApplication",
 ] }
 
+# block2: enables all completion-handler-accepting methods
+#   (requestAuthorizationWithOptions_completionHandler,
+#    addNotificationRequest_withCompletionHandler,
+#    getDeliveredNotificationsWithCompletionHandler).
+# bitflags: enables all NS*Options constants
+#   (UNAuthorizationOptions::Alert/Sound/Badge,
+#    UNNotificationPresentationOptions::Banner/Sound/Badge,
+#    UNNotificationActionOptions::Destructive/AuthenticationRequired/Foreground,
+#    UNNotificationCategoryOptions::CustomDismissAction/AllowInCarPlay/etc).
+# UNMutableNotificationContent, UNTextInputNotificationAction,
+# UNTextInputNotificationResponse, UNUserNotificationCenterDelegate,
+# and all UNNotification*Level/InterruptionLevel types are unconditionally
+# included in 0.2.2 — they have no feature flag.
 objc2-user-notifications = { version = "0.2", features = [
-    # Sourced from the exact available feature list in the 0.2.2 CI error.
-    # block2: enables all completion-handler-based methods.
-    # bitflags: enables UNAuthorizationOptions, UNNotificationPresentationOptions,
-    #           UNNotificationActionOptions, UNNotificationCategoryOptions constants.
-    # UNMutableNotificationContent, UNTextInputNotificationAction,
-    # UNTextInputNotificationResponse, UNUserNotificationCenterDelegate,
-    # and interruption level types are unconditionally included in 0.2.2.
     "block2",
     "bitflags",
     "UNNotification",

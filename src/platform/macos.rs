@@ -83,7 +83,7 @@ use objc2_user_notifications::{
 
 use crate::ipc::{
     ActionDefinition, Capabilities, CategoryDefinition, Command, DeliveredNotification,
-    InitCommand, ShowCommand, REASON_DEFAULT_ACTION, REASON_USER_DISMISSED,
+    ShowCommand, REASON_DEFAULT_ACTION, REASON_USER_DISMISSED,
 };
 use crate::output::{
     evt_delivered, evt_failed, evt_ready, evt_shown, evt_warn,
@@ -113,6 +113,7 @@ declare_class!(
         type Ivars = DelegateIvars;
     }
 
+    // NSObjectProtocol is required by UNUserNotificationCenterDelegate.
     unsafe impl NSObjectProtocol for NotificationDelegate {}
 
     /// UNUserNotificationCenterDelegate protocol implementation.
@@ -175,13 +176,19 @@ declare_class!(
                     evt_dismissed(&id, REASON_USER_DISMISSED)
                 }
                 _ => {
-                    // Attempt downcast to text-input response first.
-                    // UNTextInputNotificationResponse is a subclass of
-                    // UNNotificationResponse — downcast_ref is safe here.
-                    let text_response = unsafe {
-                        response.downcast_ref::<UNTextInputNotificationResponse>()
+                    // Check if this is a text-input response via isKindOfClass.
+                    // downcast_ref is not available on plain &T in objc2 0.5.x —
+                    // only on &AnyObject. We use the ObjC runtime check instead.
+                    use objc2::ClassType;
+                    let is_text: bool = unsafe {
+                        objc2::msg_send![response, isKindOfClass: UNTextInputNotificationResponse::class()]
                     };
-                    if let Some(tr) = text_response {
+                    if is_text {
+                        // SAFETY: we just verified the dynamic type above.
+                        let tr = unsafe {
+                            &*(response as *const UNNotificationResponse
+                                as *const UNTextInputNotificationResponse)
+                        };
                         let text = unsafe { tr.userText().to_string() };
                         evt_reply(&id, &action_id, &text)
                     } else {
@@ -265,7 +272,7 @@ pub fn run() {
         unsafe {
             center.requestAuthorizationWithOptions_completionHandler(
                 options,
-                &handler.copy(),
+                &handler,
             );
         }
     }
@@ -454,7 +461,7 @@ fn show(
                         // NSArray is immutable — rebuild with the new element.
                         let existing = content.attachments();
                         let mut vec: Vec<Retained<UNNotificationAttachment>> =
-                            existing.iter().map(|a| a.retain()).collect();
+                            existing.to_vec();
                         vec.push(att);
                         let arr = NSArray::from_id_slice(&vec);
                         content.setAttachments(&arr);
@@ -498,7 +505,7 @@ fn show(
     unsafe {
         center.addNotificationRequest_withCompletionHandler(
             &request,
-            Some(&handler.copy()),
+            Some(&handler),
         );
     }
 }
@@ -658,7 +665,7 @@ fn get_delivered(center: &UNUserNotificationCenter, tx: &mpsc::Sender<String>) {
             if !raw.is_null() {
                 let arr = unsafe { &*raw };
 
-                for notif in arr {
+                for notif in arr.iter() {
                     let request = unsafe { notif.request() };
                     let content = unsafe { request.content() };
 
@@ -691,7 +698,7 @@ fn get_delivered(center: &UNUserNotificationCenter, tx: &mpsc::Sender<String>) {
     );
 
     unsafe {
-        center.getDeliveredNotificationsWithCompletionHandler(&handler.copy());
+        center.getDeliveredNotificationsWithCompletionHandler(&handler);
     }
 }
 
