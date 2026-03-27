@@ -1,0 +1,15 @@
+{
+  "name": "@phtdacosta/notifier-hook-darwin-arm64",
+  "version": "1.0.0",
+  "description": "notifier-hook native binary for macOS arm64 (Apple Silicon)",
+  "files": [
+    "notifier-hook-daemon"
+  ],
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phtdacosta/notifier-hook.git"
+  }
+}

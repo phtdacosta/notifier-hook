@@ -1,0 +1,15 @@
+{
+  "name": "@phtdacosta/notifier-hook-win32-x64",
+  "version": "1.0.0",
+  "description": "notifier-hook native binary for Windows x64",
+  "files": [
+    "notifier-hook-daemon.exe"
+  ],
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phtdacosta/notifier-hook.git"
+  }
+}

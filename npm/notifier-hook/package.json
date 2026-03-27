@@ -1,0 +1,70 @@
+{
+  "name": "notifier-hook",
+  "version": "1.0.0",
+  "description": "Enterprise-grade native notifications for Bun and Node.js. One API. Every OS. No build step.",
+  "main": "index.js",
+  "types": "index.d.ts",
+
+  "exports": {
+    ".": {
+      "require": "./index.js",
+      "import":  "./index.js",
+      "types":   "./index.d.ts"
+    }
+  },
+
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+
+  "keywords": [
+    "notification",
+    "notify",
+    "toast",
+    "native",
+    "cross-platform",
+    "bun",
+    "node",
+    "windows",
+    "macos",
+    "linux",
+    "desktop",
+    "system-notification",
+    "rust",
+    "daemon",
+    "ipc",
+    "action-center",
+    "dbus",
+    "unnotification"
+  ],
+
+  "author": "phtdacosta",
+  "license": "MIT",
+
+  "repository": {
+    "type": "git",
+    "url":  "https://github.com/phtdacosta/notifier-hook.git"
+  },
+
+  "bugs": {
+    "url": "https://github.com/phtdacosta/notifier-hook/issues"
+  },
+
+  "homepage": "https://github.com/phtdacosta/notifier-hook#readme",
+
+  "engines": {
+    "node": ">=18.0.0"
+  },
+
+  "optionalDependencies": {
+    "@phtdacosta/notifier-hook-win32-x64":    "1.0.0",
+    "@phtdacosta/notifier-hook-win32-arm64":  "1.0.0",
+    "@phtdacosta/notifier-hook-darwin-x64":   "1.0.0",
+    "@phtdacosta/notifier-hook-darwin-arm64": "1.0.0",
+    "@phtdacosta/notifier-hook-linux-x64":    "1.0.0",
+    "@phtdacosta/notifier-hook-linux-arm64":  "1.0.0"
+  }
+}

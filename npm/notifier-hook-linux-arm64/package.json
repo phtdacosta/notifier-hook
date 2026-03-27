@@ -1,0 +1,15 @@
+{
+  "name": "@phtdacosta/notifier-hook-linux-arm64",
+  "version": "1.0.0",
+  "description": "notifier-hook native binary for Linux arm64",
+  "files": [
+    "notifier-hook-daemon"
+  ],
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phtdacosta/notifier-hook.git"
+  }
+}

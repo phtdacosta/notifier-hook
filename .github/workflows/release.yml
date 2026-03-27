@@ -1,0 +1,269 @@
+# .github/workflows/release.yml
+#
+# notifier-hook release pipeline
+#
+# Trigger: push of a semver tag — v1.0.0, v1.2.3, v2.0.0-beta.1, etc.
+#
+# Jobs:
+#   1. check              — cargo check on all 3 platform runners (fail-fast)
+#   2. build-and-publish  — build + publish each platform package in parallel
+#                           "already published" is non-fatal for safe re-runs
+#   3. publish-main       — stamps + publishes notifier-hook, creates GH release
+#
+# Required secrets: NPM_TOKEN
+# Required permissions: contents:write (GH release), id-token:write (provenance)
+
+name: Release notifier-hook
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE:   1
+
+# ─── Job 1: cargo check ───────────────────────────────────────────────────────
+
+jobs:
+  check:
+    name: Check — ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artefacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: check-${{ matrix.target }}
+
+      - name: Install D-Bus dev headers (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: cargo check
+        run: cargo check --target ${{ matrix.target }}
+
+# ─── Job 2: Build binaries + publish platform packages ────────────────────────
+
+  build-and-publish-binaries:
+    name: Build & Publish — ${{ matrix.npm_dir }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            npm_dir: notifier-hook-win32-x64
+            binary_name: notifier-hook-daemon.exe
+
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            npm_dir: notifier-hook-win32-arm64
+            binary_name: notifier-hook-daemon.exe
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            npm_dir: notifier-hook-darwin-x64
+            binary_name: notifier-hook-daemon
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            npm_dir: notifier-hook-darwin-arm64
+            binary_name: notifier-hook-daemon
+
+          # ubuntu-22.04 → glibc 2.35
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            npm_dir: notifier-hook-linux-x64
+            binary_name: notifier-hook-daemon
+
+          # Native arm64 runner — no cross needed, no libdbus cross-sysroot issues
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            npm_dir: notifier-hook-linux-arm64
+            binary_name: notifier-hook-daemon
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artefacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
+      # Activates the amd64->arm64 MSVC cross-linker on the Windows runner.
+      # Without this, cargo finds the Rust target but not the linker.
+      - name: Install MSVC ARM64 cross-compiler
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Install Linux dependencies
+        if: contains(matrix.os, 'ubuntu')
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Build Rust binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (macOS)
+        if: runner.os == 'macOS'
+        run: strip "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+
+      - name: Strip binary (Linux)
+        if: runner.os == 'Linux'
+        run: strip "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+
+      # Upload so the publish-main job can attach binaries to the GitHub release
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.npm_dir }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary_name }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Copy binary to npm package folder
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "npm/${{ matrix.npm_dir }}/"
+
+      - name: Set version from tag
+        shell: bash
+        working-directory: npm/${{ matrix.npm_dir }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      # Treat "already published" as non-fatal so partial re-runs don't hard-fail
+      - name: Publish platform package
+        shell: bash
+        working-directory: npm/${{ matrix.npm_dir }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          OUTPUT=$(npm publish --access public --provenance 2>&1) && echo "$OUTPUT" && exit 0
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -qiE "already exists|previously published|cannot publish over" && exit 0
+          exit 1
+
+# ─── Job 3: Publish main package + create GitHub release ──────────────────────
+
+  publish-main-package:
+    name: Publish main package + GitHub release
+    needs: build-and-publish-binaries
+    if: ${{ !contains(needs.build-and-publish-binaries.result, 'failure') && !contains(needs.build-and-publish-binaries.result, 'cancelled') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Set version from tag
+        working-directory: npm/notifier-hook
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            for (const k of Object.keys(pkg.optionalDependencies ?? {})) {
+              pkg.optionalDependencies[k] = process.env.VERSION;
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: Copy README into package
+        run: cp README.md npm/notifier-hook/README.md
+
+      - name: Publish main package
+        working-directory: npm/notifier-hook
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          OUTPUT=$(npm publish --access public --provenance 2>&1) && echo "$OUTPUT" && exit 0
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -qiE "already exists|previously published|cannot publish over" && exit 0
+          exit 1
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "notifier-hook ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          body: |
+            ## notifier-hook ${{ github.ref_name }}
+
+            ```sh
+            npm install notifier-hook
+            bun add notifier-hook
+            ```
+
+            | Platform | Arch | glibc |
+            |---|---|---|
+            | Windows 10/11 | x64 | — |
+            | Windows 10/11 | arm64 | — |
+            | macOS 12+ | x64 Intel | — |
+            | macOS 12+ | arm64 Apple Silicon | — |
+            | Linux | x64 | >= 2.35 |
+            | Linux | arm64 | >= 2.35 |
+          files: |
+            artifacts/binary-notifier-hook-win32-x64/notifier-hook-daemon.exe
+            artifacts/binary-notifier-hook-win32-arm64/notifier-hook-daemon.exe
+            artifacts/binary-notifier-hook-darwin-x64/notifier-hook-daemon
+            artifacts/binary-notifier-hook-darwin-arm64/notifier-hook-daemon
+            artifacts/binary-notifier-hook-linux-x64/notifier-hook-daemon
+            artifacts/binary-notifier-hook-linux-arm64/notifier-hook-daemon

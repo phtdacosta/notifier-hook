@@ -1,0 +1,182 @@
+[package]
+name        = "notifier-hook-daemon"
+version     = "1.0.0"
+edition     = "2021"
+description = "Native notification daemon for notifier-hook — spawned by the JS layer"
+license     = "MIT"
+
+# ─── Universal dependencies ────────────────────────────────────────────────────
+
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ─── Windows ───────────────────────────────────────────────────────────────────
+# Official first-party Microsoft Rust bindings — no middleman crate.
+#
+# Feature flag rationale (every flag here is directly used in platform/windows.rs):
+#
+#   UI_Notifications
+#       ToastNotification, ToastNotifier, ToastActivatedEventArgs,
+#       ToastDismissalReason, Activated/Dismissed/Failed TypedEventHandlers.
+#       Note: "UI_Notifications" alone does NOT compile toast code —
+#       the sub-module suffix is mandatory.
+#
+#   UI_Notifications_Management
+#       ToastNotificationManager (factory + History accessor),
+#       ToastNotificationHistory (GetHistoryWithId, RemoveGroupedTagWithId, ClearWithId).
+#
+#   Data_Xml_Dom
+#       XmlDocument::LoadXml — used for both the raw XML injection path
+#       (windows.xml field) and baseline XML construction.
+#
+#   Foundation
+#       TypedEventHandler<TSender, TResult> — event handler registration.
+#       DateTime — ExpirationTime computation for expiration_ms.
+#       Core WinRT infrastructure (IReference, etc.).
+#
+#   Foundation_Collections
+#       IMap<String, Object> — returned by ToastActivatedEventArgs::UserInput().
+#       Required to iterate inline text-reply input values.
+#
+#   Win32_System_Com
+#       CoInitializeEx + COINIT_APARTMENTTHREADED.
+#       MANDATORY FIRST CALL. Without it every subsequent WinRT/Toast call
+#       silently returns CO_E_NOTINITIALIZED. No panic, no error — just silence.
+#
+#   Win32_System_Registry
+#       RegCreateKeyExW, RegSetValueExW, RegCloseKey, HKEY_CURRENT_USER,
+#       KEY_WRITE, REG_SZ, REG_OPTION_NON_VOLATILE.
+#       Used to persist the AUMID DisplayName in the registry on first run,
+#       granting correct Action Center attribution text.
+#
+# Intentionally excluded:
+#   "core_HSTRING"
+#       HSTRING lives in windows::core which is always included unconditionally.
+#       No feature flag exists for it in windows 0.58 — adding it is a compile error.
+#   "Win32_UI_Shell_PropertiesSystem"
+#       IPropertyStore / PKEY_AppUserModel_ID — not used. AUMID registration
+#       is done via direct registry writes (RegCreateKeyExW), not COM property store.
+#   "Win32_UI_Shell"
+#       SHGetKnownFolderPath — not used in this codebase.
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "UI_Notifications",
+    "UI_Notifications_Management",
+    "Data_Xml_Dom",
+    "Foundation",
+    "Foundation_Collections",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_Security",
+] }
+
+# ─── macOS ─────────────────────────────────────────────────────────────────────
+# objc2 family — memory-safe, idiomatic Rust bindings to Apple's ObjC frameworks.
+#
+#   objc2
+#       Core runtime: declare_class!, msg_send!, msg_send_id!, ClassType,
+#       DeclaredClass, mutability types, Retained<T> smart pointer.
+#
+#   objc2-foundation
+#       NSString, NSArray<T>, NSSet<T>, NSURL, NSNumber, NSDate, MainThreadMarker.
+#
+#   objc2-app-kit
+#       NSApplication + NSApplicationActivationPolicy.
+#       REQUIRED and most commonly omitted in online examples.
+#       NSApp.run() starts the main-thread CFRunLoop. Without an active CFRunLoop
+#       the UNUserNotificationCenter delegate callbacks never fire.
+#
+#   objc2-user-notifications
+#       UNUserNotificationCenter, UNMutableNotificationContent,
+#       UNNotificationRequest, UNNotificationResponse, UNNotification,
+#       UNNotificationAction, UNTextInputNotificationAction,
+#       UNTextInputNotificationResponse, UNNotificationAttachment,
+#       UNNotificationCategory, UNNotificationSound,
+#       UNNotificationInterruptionLevel, UNNotificationPresentationOptions,
+#       UNNotificationCategoryOptions, UNAuthorizationOptions,
+#       UNUserNotificationCenterDelegate (full protocol).
+#
+#   block2
+#       Objective-C block support. Required for every completion handler:
+#       requestAuthorizationWithOptions:completionHandler:,
+#       addNotificationRequest:withCompletionHandler:,
+#       getDeliveredNotificationsWithCompletionHandler:.
+#       Version must match objc2's companion: block2 0.5.x for objc2 0.5.x.
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2                    = "0.5"
+objc2-foundation         = "0.2"
+objc2-app-kit            = "0.2"
+objc2-user-notifications = "0.2"
+block2                   = "0.5"
+
+# ─── Linux ─────────────────────────────────────────────────────────────────────
+# Direct org.freedesktop.Notifications D-Bus access via zbus.
+#
+# notify-rust is intentionally excluded — it is itself an abstraction layer
+# that hides the raw hints dict, replaces_id, signal subscription control,
+# and GetCapabilities results that notifier-hook needs to expose.
+#
+#   zbus "tokio"
+#       Async D-Bus with Tokio executor integration. Provides Connection,
+#       MatchRule + MatchRuleBuilder, MessageStream for signal subscriptions,
+#       and the call_method helper for synchronous D-Bus method calls.
+#
+#   tokio "rt-multi-thread" + "macros"
+#       Multi-threaded runtime required by the stdin-bridge pattern:
+#       blocking stdin I/O runs on a dedicated OS thread (std::thread::spawn)
+#       and bridges into the async executor via tokio::sync::mpsc::unbounded_channel.
+#       This is the canonical fix for the Tokio executor starvation bug that
+#       would otherwise prevent ActionInvoked / NotificationClosed signal tasks
+#       from being polled while stdin blocks.
+#       "macros" enables the #[tokio::main] entry-point attribute.
+#
+#   futures-util
+#       StreamExt on MessageStream (D-Bus signal streams) — stream.next().await.
+#       Listed explicitly rather than relying on zbus re-exporting it. That
+#       re-export is a private implementation detail of zbus and may disappear
+#       in any minor release without a semver break on their part.
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus         = { version = "4", features = ["tokio"] }
+tokio        = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"
+
+# ─── Binary ────────────────────────────────────────────────────────────────────
+
+[[bin]]
+name = "notifier-hook-daemon"
+path = "src/main.rs"
+
+# ─── Release profile ───────────────────────────────────────────────────────────
+# Every knob here is intentional — minimise the binary shipped in platform packages.
+#
+#   opt-level 3
+#       Maximum compiler optimisation. Produces the fastest, most inlined code.
+#
+#   lto = true
+#       Full link-time optimisation. Dead-code elimination and cross-crate inlining.
+#       Typical size reduction: 20–40% vs lto = false.
+#
+#   codegen-units = 1
+#       Single codegen unit maximises inlining opportunities available to LTO.
+#       Increases compile time; acceptable for a release-only build.
+#
+#   strip = true
+#       Strip DWARF debug symbols from the final binary.
+#       Typical size reduction: 30–40% on release builds.
+#
+#   panic = "abort"
+#       Remove the stack-unwinding machinery (~150–250 KB on Windows/macOS).
+#       Safe here because our custom panic hook in main.rs writes to stderr
+#       (never stdout) before std::process::abort() terminates the process,
+#       preserving the JSON stream on stdout regardless of what panics.
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"
