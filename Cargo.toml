@@ -122,10 +122,10 @@ objc2-foundation = { version = "0.2", features = [
     "NSArray",
     "NSDate",
     "NSError",
-    "NSNumber",
     "NSSet",
     "NSString",
     "NSURL",
+    # NSNumber is unconditionally included in 0.2.2 — no feature flag needed.
 ] }
 
 objc2-app-kit = { version = "0.2", features = [
